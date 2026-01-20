@@ -1,9 +1,12 @@
 [phases.setup]
-nixPkgs = ["tesseract4", "tesseract"]
-aptPkgs = ["tesseract-ocr", "tesseract-ocr-eng"]
+nixPkgs = ["tesseract"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+cmds = [
+    "apt-get update || true",
+    "apt-get install -y tesseract-ocr tesseract-ocr-eng || true",
+    "pip install -r requirements.txt"
+]
 
 [start]
 cmd = "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
