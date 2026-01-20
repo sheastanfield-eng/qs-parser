@@ -13,7 +13,7 @@ def test_health_check():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert "pymupdf_version" in data
+    assert "ocr_available" in data
 
 
 def test_root():
@@ -29,10 +29,10 @@ def test_parse_no_file():
 
 
 def test_parse_wrong_type():
-    """Test parse endpoint with non-PDF returns error"""
+    """Test parse endpoint with unsupported file type returns error"""
     response = client.post(
         "/parse",
         files={"file": ("test.txt", b"hello", "text/plain")}
     )
     assert response.status_code == 400
-    assert "PDF" in response.json()["detail"]
+    assert "Unsupported file type" in response.json()["detail"]

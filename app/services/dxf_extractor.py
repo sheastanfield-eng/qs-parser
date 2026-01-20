@@ -164,20 +164,23 @@ def extract_dimensions(msp, doc) -> List[Dict[str, Any]]:
 
             matches = dimension_pattern.finditer(text)
             for match in matches:
-                if match.group(1):
-                    value = float(match.group(1))
-                elif match.group(3):
-                    value = float(match.group(3).replace(',', '.')) * 1000
-                else:
-                    continue
+                try:
+                    if match.group(1):
+                        value = float(match.group(1))
+                    elif match.group(3):
+                        value = float(match.group(3).replace(',', '.')) * 1000
+                    else:
+                        continue
 
-                if 100 <= value <= 50000:
-                    dimensions.append({
-                        'value': text.strip(),
-                        'numeric_value': value,
-                        'unit': 'mm',
-                        'type': 'text_label'
-                    })
+                    if value is not None and 100 <= value <= 50000:
+                        dimensions.append({
+                            'value': text.strip(),
+                            'numeric_value': value,
+                            'unit': 'mm',
+                            'type': 'text_label'
+                        })
+                except (ValueError, TypeError):
+                    continue
         except Exception:
             continue
 

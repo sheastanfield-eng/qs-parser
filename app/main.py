@@ -7,10 +7,18 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
 import os
+import logging
 from typing import Dict, Any
 
 from app.services.pdf_extractor import extract_from_pdf
 from app.services.dxf_extractor import extract_from_dxf
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="QS Parser",
@@ -66,12 +74,15 @@ async def parse_file(file: UploadFile = File(...)) -> Dict[str, Any]:
     Returns extracted walls, rooms, dimensions, doors, windows.
     """
     if not file.filename:
+        logger.warning("Parse request with no filename")
         raise HTTPException(status_code=400, detail="No filename provided")
 
     # Get file extension
     ext = file.filename.lower().split('.')[-1]
+    logger.info(f"Parsing file: {file.filename} (type: {ext})")
 
     if ext not in ['pdf', 'dxf']:
+        logger.warning(f"Unsupported file type: {ext}")
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type: {ext}. Supported: pdf, dxf"
@@ -82,24 +93,35 @@ async def parse_file(file: UploadFile = File(...)) -> Dict[str, Any]:
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
+        logger.info(f"Saved to temp file: {tmp_path}, size: {len(content)} bytes")
 
     try:
         # Extract based on file type
         if ext == 'pdf':
+            logger.info("Starting PDF extraction...")
             result = extract_from_pdf(tmp_path)
+            logger.info(f"PDF extraction complete: {len(result.get('walls', []))} walls, "
+                       f"{len(result.get('dimensions', []))} dimensions, "
+                       f"{len(result.get('rooms', []))} rooms, "
+                       f"OCR used: {result.get('ocr_used', False)}")
         elif ext == 'dxf':
+            logger.info("Starting DXF extraction...")
             result = extract_from_dxf(tmp_path)
+            logger.info(f"DXF extraction complete: {len(result.get('walls', []))} walls, "
+                       f"{len(result.get('dimensions', []))} dimensions")
 
         result['filename'] = file.filename
         return result
 
     except Exception as e:
+        logger.error(f"Extraction failed for {file.filename}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
     finally:
         # Clean up temp file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+            logger.debug(f"Cleaned up temp file: {tmp_path}")
 
 
 @app.post("/parse/multi")

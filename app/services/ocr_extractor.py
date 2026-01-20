@@ -55,43 +55,49 @@ def extract_dimensions_from_text(text: str) -> List[Dict[str, Any]]:
     for pattern in metric_patterns:
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for match in matches:
-            value = match.group(1).replace(',', '.')
+            try:
+                value = match.group(1).replace(',', '.')
 
-            # Convert to mm
-            if 'm' in text[match.end():match.end()+2].lower() and 'mm' not in text[match.end():match.end()+3].lower():
-                # It's meters, convert to mm
-                numeric_value = float(value) * 1000
-            else:
-                numeric_value = float(value)
+                # Convert to mm
+                if 'm' in text[match.end():match.end()+2].lower() and 'mm' not in text[match.end():match.end()+3].lower():
+                    # It's meters, convert to mm
+                    numeric_value = float(value) * 1000
+                else:
+                    numeric_value = float(value)
 
-            # Filter out unrealistic values (less than 100mm or more than 50000mm)
-            if 100 <= numeric_value <= 50000:
-                dimensions.append({
-                    'value': match.group(0),
-                    'numeric_value': numeric_value,
-                    'unit': 'mm',
-                    'source': 'ocr'
-                })
+                # Filter out unrealistic values (less than 100mm or more than 50000mm)
+                if numeric_value is not None and 100 <= numeric_value <= 50000:
+                    dimensions.append({
+                        'value': match.group(0),
+                        'numeric_value': numeric_value,
+                        'unit': 'mm',
+                        'source': 'ocr'
+                    })
+            except (ValueError, TypeError):
+                continue
 
     # Extract imperial
     for pattern in imperial_patterns:
         matches = re.finditer(pattern, text)
         for match in matches:
-            if len(match.groups()) == 2:
-                feet = int(match.group(1))
-                inches = int(match.group(2))
-                numeric_value = (feet * 12 + inches) * 25.4  # Convert to mm
-            else:
-                feet = int(match.group(1))
-                numeric_value = feet * 12 * 25.4
+            try:
+                if len(match.groups()) == 2:
+                    feet = int(match.group(1))
+                    inches = int(match.group(2))
+                    numeric_value = (feet * 12 + inches) * 25.4  # Convert to mm
+                else:
+                    feet = int(match.group(1))
+                    numeric_value = feet * 12 * 25.4
 
-            if 100 <= numeric_value <= 50000:
-                dimensions.append({
-                    'value': match.group(0),
-                    'numeric_value': numeric_value,
-                    'unit': 'mm',
-                    'source': 'ocr'
-                })
+                if numeric_value is not None and 100 <= numeric_value <= 50000:
+                    dimensions.append({
+                        'value': match.group(0),
+                        'numeric_value': numeric_value,
+                        'unit': 'mm',
+                        'source': 'ocr'
+                    })
+            except (ValueError, TypeError):
+                continue
 
     # Remove duplicates (same numeric value)
     seen = set()

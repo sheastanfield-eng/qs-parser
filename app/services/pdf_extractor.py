@@ -294,6 +294,12 @@ def extract_dimensions(page: fitz.Page) -> List[dict]:
                         # Calculate numeric value in mm
                         numeric = parse_dimension_to_mm(text, match)
 
+                        # Skip if parsing failed or value is unrealistic
+                        if numeric is None:
+                            continue
+                        if not (100 <= numeric <= 50000):
+                            continue
+
                         dimensions.append({
                             "value": text,
                             "numeric_value": numeric,
