@@ -1,12 +1,100 @@
 """
 PDF Floor Plan Extractor
 Uses PyMuPDF to extract vector graphics and text from CAD-generated PDFs
+With OCR fallback for PDFs where text is rendered as curves.
 """
 
 import fitz  # PyMuPDF
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import re
 import math
+
+
+def extract_from_pdf(file_path: str) -> Dict[str, Any]:
+    """
+    Extract floor plan data from a PDF file.
+    Falls back to OCR if no text is found but walls are present.
+
+    Args:
+        file_path: Path to the PDF file
+
+    Returns:
+        Dictionary with walls, rooms, dimensions, doors, windows, etc.
+    """
+    doc = fitz.open(file_path)
+
+    walls = []
+    dimensions = []
+    rooms = []
+    doors = []
+    windows = []
+    raw_text = []
+
+    for page_num, page in enumerate(doc):
+        # Extract text normally
+        text = page.get_text()
+        raw_text.append(text)
+
+        # Extract vector graphics for walls
+        page_walls = extract_walls_enhanced(page)
+        walls.extend(page_walls)
+
+        # Extract dimensions from text
+        page_dims = extract_dimensions(page)
+        dimensions.extend(page_dims)
+
+        # Extract room labels
+        page_rooms = extract_rooms(page, page_walls)
+        rooms.extend(page_rooms)
+
+        # Extract doors
+        page_doors = extract_doors(page)
+        doors.extend(page_doors)
+
+        # Extract windows
+        page_windows = extract_windows(page)
+        windows.extend(page_windows)
+
+    # Calculate initial confidence
+    total_text = ' '.join(raw_text)
+    confidence = calculate_confidence_enhanced(walls, dimensions, raw_text, rooms, doors, windows)
+
+    # If low confidence due to no text, try OCR
+    ocr_used = False
+    if len(dimensions) == 0 and len(rooms) == 0 and len(walls) > 0:
+        try:
+            from app.services.ocr_extractor import process_pdf_with_ocr
+            ocr_result = process_pdf_with_ocr(file_path)
+
+            if ocr_result['dimensions'] or ocr_result['rooms']:
+                dimensions = ocr_result['dimensions']
+                rooms = [{'name': r['name'], 'label': r['name'], 'source': 'ocr'} for r in ocr_result['rooms']]
+                raw_text = ocr_result['raw_text']
+                ocr_used = True
+
+                # Recalculate confidence with OCR data
+                confidence = calculate_confidence_enhanced(walls, dimensions, raw_text, rooms, doors, windows)
+                # Slight penalty for OCR (less reliable than native text)
+                confidence = confidence * 0.9
+        except Exception as e:
+            # OCR failed, continue with what we have
+            pass
+
+    doc.close()
+
+    return {
+        'walls': walls,
+        'rooms': rooms,
+        'dimensions': dimensions,
+        'doors': doors,
+        'windows': windows,
+        'page_count': len(raw_text),
+        'raw_text': raw_text,
+        'extraction_confidence': round(confidence, 2),
+        'confidence': round(confidence, 2),
+        'ocr_used': ocr_used,
+        'file_type': 'pdf'
+    }
 
 
 def extract_floor_plan(pdf_content: bytes) -> dict:

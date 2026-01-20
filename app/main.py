@@ -1,173 +1,177 @@
 """
-QS Parser Service
-Extracts structured data from construction PDF drawings
+QS Parser API - Floor plan extraction service.
+Supports PDF (with OCR fallback) and DXF files.
 """
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import uvicorn
+import tempfile
+import os
+from typing import Dict, Any
+
+from app.services.pdf_extractor import extract_from_pdf
+from app.services.dxf_extractor import extract_from_dxf
 
 app = FastAPI(
-    title="QS Parser Service",
-    description="Extract floor plan data from PDF drawings",
-    version="1.0.0"
+    title="QS Parser",
+    description="Extract floor plan data from PDF and DXF files",
+    version="2.0.0"
 )
 
-# CORS for main app to call this service
+# CORS for main app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Response Models
-class Point(BaseModel):
-    x: float
-    y: float
+@app.get("/")
+async def root():
+    return {
+        "service": "QS Parser",
+        "version": "2.0.0",
+        "supported_formats": ["pdf", "dxf"],
+        "features": ["ocr_fallback", "dxf_parsing"]
+    }
 
 
-class Wall(BaseModel):
-    start: Point
-    end: Point
-    length: float  # in millimeters
-
-
-class Room(BaseModel):
-    name: Optional[str] = None
-    vertices: List[Point]
-    area: float  # in square meters
-    perimeter: float  # in meters
-
-
-class Dimension(BaseModel):
-    value: str  # Raw text like "4500mm" or "4.5m"
-    numeric_value: Optional[float] = None  # Parsed to mm
-    position: Point
-
-
-class Door(BaseModel):
-    position: Point
-    width: Optional[float] = None
-
-
-class Window(BaseModel):
-    position: Point
-    width: Optional[float] = None
-
-
-class ExtractedFloorPlan(BaseModel):
-    walls: List[Wall] = []
-    rooms: List[Room] = []
-    dimensions: List[Dimension] = []
-    doors: List[Door] = []
-    windows: List[Window] = []
-    page_width: float
-    page_height: float
-    scale_factor: Optional[float] = None  # If we can detect it
-    raw_text: List[str] = []  # All text found
-    extraction_confidence: float  # 0-1
-
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    pymupdf_version: str
-
-
-class ParseResponse(BaseModel):
-    success: bool
-    data: Optional[ExtractedFloorPlan] = None
-    error: Optional[str] = None
-    pages_processed: int = 0
-
-
-# Routes
-@app.get("/", response_model=HealthResponse)
+@app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    import fitz
-    return HealthResponse(
-        status="healthy",
-        version="1.0.0",
-        pymupdf_version=fitz.version[0]
-    )
+    """Health check endpoint."""
+    health_status = {
+        "status": "healthy",
+        "pdf_parser": "ok",
+        "dxf_parser": "ok",
+        "ocr_available": False
+    }
+
+    # Check OCR availability
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        health_status["ocr_available"] = True
+    except Exception:
+        health_status["ocr_available"] = False
+
+    return health_status
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health():
-    """Alias for health check"""
-    return await health_check()
-
-
-@app.post("/parse", response_model=ParseResponse)
-async def parse_pdf(file: UploadFile = File(...)):
+@app.post("/parse")
+async def parse_file(file: UploadFile = File(...)) -> Dict[str, Any]:
     """
-    Parse a PDF floor plan and extract structured data.
-
-    Accepts: PDF file (CAD-generated preferred)
-    Returns: Structured floor plan data (walls, rooms, dimensions)
+    Parse a floor plan file (PDF or DXF).
+    Returns extracted walls, rooms, dimensions, doors, windows.
     """
-    # Validate file type
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    # Get file extension
+    ext = file.filename.lower().split('.')[-1]
+
+    if ext not in ['pdf', 'dxf']:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported"
+            detail=f"Unsupported file type: {ext}. Supported: pdf, dxf"
         )
+
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
 
     try:
-        # Read file content
-        content = await file.read()
+        # Extract based on file type
+        if ext == 'pdf':
+            result = extract_from_pdf(tmp_path)
+        elif ext == 'dxf':
+            result = extract_from_dxf(tmp_path)
 
-        # Import and use extraction service
-        from app.services.pdf_extractor import extract_floor_plan
-
-        result = extract_floor_plan(content)
-
-        return ParseResponse(
-            success=True,
-            data=result,
-            pages_processed=1
-        )
+        result['filename'] = file.filename
+        return result
 
     except Exception as e:
-        return ParseResponse(
-            success=False,
-            error=str(e),
-            pages_processed=0
-        )
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+    finally:
+        # Clean up temp file
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
-@app.post("/parse/multi", response_model=List[ParseResponse])
-async def parse_multi_page_pdf(file: UploadFile = File(...)):
+@app.post("/parse/multi")
+async def parse_multi_page(file: UploadFile = File(...)) -> Dict[str, Any]:
     """
-    Parse a multi-page PDF and extract data from each page.
+    Parse a multi-page PDF, returning data for each page.
+    For DXF files, behaves the same as /parse.
     """
-    if not file.filename.lower().endswith('.pdf'):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = file.filename.lower().split('.')[-1]
+
+    if ext not in ['pdf', 'dxf']:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF files are supported"
+            detail=f"Unsupported file type: {ext}. Supported: pdf, dxf"
         )
 
-    try:
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
         content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
 
-        from app.services.pdf_extractor import extract_all_pages
+    try:
+        if ext == 'dxf':
+            # DXF doesn't have pages
+            result = extract_from_dxf(tmp_path)
+            result['filename'] = file.filename
+            return result
 
-        results = extract_all_pages(content)
+        # Multi-page PDF processing
+        import fitz
+        doc = fitz.open(tmp_path)
+        pages_data = []
 
-        return [
-            ParseResponse(success=True, data=r, pages_processed=1)
-            for r in results
-        ]
+        for page_num in range(len(doc)):
+            # Create temp file for single page
+            single_page_doc = fitz.open()
+            single_page_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as page_tmp:
+                single_page_doc.save(page_tmp.name)
+                single_page_doc.close()
+
+                page_result = extract_from_pdf(page_tmp.name)
+                page_result['page_number'] = page_num + 1
+                pages_data.append(page_result)
+
+                os.unlink(page_tmp.name)
+
+        doc.close()
+
+        # Combine results
+        combined = {
+            'filename': file.filename,
+            'total_pages': len(pages_data),
+            'pages': pages_data,
+            'summary': {
+                'total_walls': sum(len(p['walls']) for p in pages_data),
+                'total_dimensions': sum(len(p['dimensions']) for p in pages_data),
+                'total_rooms': sum(len(p['rooms']) for p in pages_data),
+                'ocr_used_on_pages': [p['page_number'] for p in pages_data if p.get('ocr_used', False)]
+            }
+        }
+
+        return combined
 
     except Exception as e:
-        return [ParseResponse(success=False, error=str(e), pages_processed=0)]
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
-
-if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
