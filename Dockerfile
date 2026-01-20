@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Use shell form for proper env var expansion
-ENTRYPOINT uvicorn app.main:app --host 0.0.0.0 --port $PORT
+# Railway sets PORT env var, default to 8000 for local testing
+ENV PORT=8000
+
+# Use python -m to ensure uvicorn is found
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
