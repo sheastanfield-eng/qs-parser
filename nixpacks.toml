@@ -1,5 +1,6 @@
 [phases.setup]
-nixPkgs = ["tesseract", "tesseract-data-eng"]
+nixPkgs = ["tesseract4", "tesseract"]
+aptPkgs = ["tesseract-ocr", "tesseract-ocr-eng"]
 
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
