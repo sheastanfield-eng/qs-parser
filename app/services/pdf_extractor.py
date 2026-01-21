@@ -430,10 +430,10 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
     all_lines = []
 
     # Minimum wall length in PDF points (72 points = 1 inch)
-    # Real walls are typically > 300mm = ~12 inches = ~850 points at 1:1
-    # But PDFs often have scale applied, so use adaptive threshold
-    MIN_WALL_LENGTH = 50  # Start with reasonable minimum
-    MAX_WALLS = 200  # Cap total walls
+    # Real walls are typically > 300mm = ~12 inches
+    # Use higher threshold to filter out annotations/hatching
+    MIN_WALL_LENGTH = 150  # Filter out short lines aggressively
+    MAX_WALLS = 80  # Cap at reasonable number for a floor plan
 
     drawings = page.get_drawings()
 
