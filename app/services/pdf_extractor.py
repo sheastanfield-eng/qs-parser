@@ -197,7 +197,7 @@ def extract_walls(page: fitz.Page) -> List[dict]:
 
     for path in drawings:
         # Check line width - walls are usually thicker
-        width = path.get("width", 0)
+        width = path.get("width") or 0
 
         for item in path.get("items", []):
             # 'l' = line, 're' = rectangle, 'c' = curve, 'qu' = quad
@@ -432,7 +432,7 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
 
     # First pass: collect all lines
     for path in drawings:
-        width = path.get("width", 0)
+        width = path.get("width") or 0
         color = path.get("color", None)
 
         for item in path.get("items", []):
@@ -696,21 +696,23 @@ def extract_windows(page: fitz.Page) -> List[dict]:
     drawings = page.get_drawings()
 
     for path in drawings:
-        width = path.get("width", 0)
+        width = path.get("width") or 0
 
         # Windows are often drawn with thinner lines
-        if 0.1 < width < 0.3:
+        if width is not None and 0.1 < width < 0.3:
             for item in path.get("items", []):
                 if item[0] == "re":  # Rectangle
                     rect = item[1]
                     # Small rectangles might be window symbols
-                    if rect.width < 50 and rect.height < 50:
+                    rect_w = getattr(rect, 'width', None) or 0
+                    rect_h = getattr(rect, 'height', None) or 0
+                    if rect_w < 50 and rect_h < 50:
                         windows.append({
                             "position": {
                                 "x": (rect.x0 + rect.x1) / 2,
                                 "y": (rect.y0 + rect.y1) / 2
                             },
-                            "width": max(rect.width, rect.height)
+                            "width": max(rect_w, rect_h)
                         })
 
     return windows
