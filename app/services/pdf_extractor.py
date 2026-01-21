@@ -424,16 +424,27 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
     - Group parallel lines (double-line walls)
     - Detect wall intersections
     - Calculate actual wall thickness
+    - Aggressive filtering to avoid counting annotations as walls
     """
     walls = []
     all_lines = []
 
+    # Minimum wall length in PDF points (72 points = 1 inch)
+    # Real walls are typically > 300mm = ~12 inches = ~850 points at 1:1
+    # But PDFs often have scale applied, so use adaptive threshold
+    MIN_WALL_LENGTH = 50  # Start with reasonable minimum
+    MAX_WALLS = 200  # Cap total walls
+
     drawings = page.get_drawings()
 
-    # First pass: collect all lines
+    # First pass: collect all lines with basic filtering
     for path in drawings:
         width = path.get("width") or 0
         color = path.get("color", None)
+
+        # Skip very thin lines (likely annotations, dimensions, hatching)
+        if width > 0 and width < 0.5:
+            continue
 
         for item in path.get("items", []):
             if item[0] == "l":
@@ -444,6 +455,10 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
                     (end.x - start.x) ** 2 +
                     (end.y - start.y) ** 2
                 )
+
+                # Skip short lines
+                if length < MIN_WALL_LENGTH:
+                    continue
 
                 # Calculate angle
                 angle = math.atan2(end.y - start.y, end.x - start.x)
@@ -459,7 +474,6 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
 
     # Second pass: filter likely walls
     # Walls are typically:
-    # - Longer than 20 points
     # - Horizontal or vertical (angles near 0, 90, 180, 270)
     # - Thicker lines (width > 0.3)
 
@@ -475,8 +489,8 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
             abs(angle_deg - 180) < 5
         )
 
-        # Wall criteria
-        if length > 20 and (width >= 0.3 or is_orthogonal):
+        # Wall criteria: must be orthogonal OR thick
+        if is_orthogonal or width >= 0.5:
             walls.append({
                 "start": line["start"],
                 "end": line["end"],
@@ -488,7 +502,55 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
     # Third pass: merge parallel close lines (double-line walls)
     walls = merge_parallel_walls(walls)
 
+    # Fourth pass: if still too many walls, progressively filter
+    if len(walls) > MAX_WALLS:
+        # Sort by length descending, keep longest
+        walls = sorted(walls, key=lambda w: w["length"], reverse=True)
+        walls = walls[:MAX_WALLS]
+
+    # Fifth pass: remove duplicate/overlapping walls
+    walls = remove_duplicate_walls(walls)
+
     return walls
+
+
+def remove_duplicate_walls(walls: List[dict], tolerance: float = 5.0) -> List[dict]:
+    """Remove walls that are essentially duplicates (same start/end points)."""
+    if len(walls) < 2:
+        return walls
+
+    unique = []
+    for wall in walls:
+        is_duplicate = False
+        for existing in unique:
+            # Check if start and end points are very close
+            start_dist = math.sqrt(
+                (wall["start"]["x"] - existing["start"]["x"]) ** 2 +
+                (wall["start"]["y"] - existing["start"]["y"]) ** 2
+            )
+            end_dist = math.sqrt(
+                (wall["end"]["x"] - existing["end"]["x"]) ** 2 +
+                (wall["end"]["y"] - existing["end"]["y"]) ** 2
+            )
+            # Also check reverse direction
+            start_dist_rev = math.sqrt(
+                (wall["start"]["x"] - existing["end"]["x"]) ** 2 +
+                (wall["start"]["y"] - existing["end"]["y"]) ** 2
+            )
+            end_dist_rev = math.sqrt(
+                (wall["end"]["x"] - existing["start"]["x"]) ** 2 +
+                (wall["end"]["y"] - existing["start"]["y"]) ** 2
+            )
+
+            if (start_dist < tolerance and end_dist < tolerance) or \
+               (start_dist_rev < tolerance and end_dist_rev < tolerance):
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            unique.append(wall)
+
+    return unique
 
 
 def merge_parallel_walls(walls: List[dict], tolerance: float = 15.0) -> List[dict]:
