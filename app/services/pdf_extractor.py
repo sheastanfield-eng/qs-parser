@@ -286,7 +286,7 @@ def extract_text_all_methods(fitz_page, plumber_page) -> Tuple[str, bool]:
 def extract_text_ocr(fitz_page) -> str:
     """
     Extract text using Tesseract OCR.
-    Uses minimal preprocessing to avoid losing text.
+    Uses 2x resolution for quality OCR.
     """
     # Render page to image at 2x resolution for better OCR
     matrix = fitz.Matrix(2, 2)
@@ -296,10 +296,9 @@ def extract_text_ocr(fitz_page) -> str:
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
     # Convert to grayscale only - NO threshold/blur preprocessing
-    # (Preprocessing was destroying some text like "68SQM")
     cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
 
-    # Run Tesseract with default config (not --psm 6 which is for uniform blocks)
+    # Run Tesseract with default config
     ocr_text = pytesseract.image_to_string(cv_img)
 
     return ocr_text
