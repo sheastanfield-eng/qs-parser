@@ -425,15 +425,16 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
     - Detect wall intersections
     - Calculate actual wall thickness
     - Aggressive filtering to avoid counting annotations as walls
+    - ALWAYS calculate length from start/end coordinates (don't trust path length)
     """
     walls = []
     all_lines = []
 
     # Minimum wall length in PDF points (72 points = 1 inch)
-    # Real walls are typically > 300mm = ~12 inches
-    # Use higher threshold to filter out annotations/hatching
-    MIN_WALL_LENGTH = 150  # Filter out short lines aggressively
-    MAX_WALLS = 80  # Cap at reasonable number for a floor plan
+    # For 1:50 scale: 1m wall = 1000mm / 50 = 20mm on paper = 20/25.4*72 = ~57 points
+    # Use 100 points as minimum (~1.8m real wall at 1:50)
+    MIN_WALL_LENGTH = 100  # ~1.8m real wall at 1:50 scale
+    MAX_WALLS = 60  # Cap at reasonable number for a floor plan
 
     drawings = page.get_drawings()
 
@@ -443,7 +444,7 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
         color = path.get("color", None)
 
         # Skip very thin lines (likely annotations, dimensions, hatching)
-        if width > 0 and width < 0.5:
+        if width > 0 and width < 0.3:
             continue
 
         for item in path.get("items", []):
@@ -451,21 +452,26 @@ def extract_walls_enhanced(page: fitz.Page) -> List[dict]:
                 start = item[1]
                 end = item[2]
 
-                length = math.sqrt(
-                    (end.x - start.x) ** 2 +
-                    (end.y - start.y) ** 2
-                )
+                # ALWAYS calculate length from actual coordinates
+                # Don't trust any reported length from the path
+                dx = end.x - start.x
+                dy = end.y - start.y
+                length = math.sqrt(dx * dx + dy * dy)
 
-                # Skip short lines
+                # Skip zero-length or very short lines
                 if length < MIN_WALL_LENGTH:
                     continue
 
+                # Skip lines where start and end are the same (point objects)
+                if abs(dx) < 0.1 and abs(dy) < 0.1:
+                    continue
+
                 # Calculate angle
-                angle = math.atan2(end.y - start.y, end.x - start.x)
+                angle = math.atan2(dy, dx)
 
                 all_lines.append({
-                    "start": {"x": start.x, "y": start.y},
-                    "end": {"x": end.x, "y": end.y},
+                    "start": {"x": float(start.x), "y": float(start.y)},
+                    "end": {"x": float(end.x), "y": float(end.y)},
                     "length": length,
                     "width": width,
                     "angle": angle,
